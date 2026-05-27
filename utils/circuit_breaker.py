@@ -8,8 +8,8 @@ PATRÓN:
 - HALF_OPEN: Probando si el servicio se recuperó
 """
 
-from typing import Callable, Any, Optional, List
-from datetime import datetime, timedelta
+from typing import Callable, Any, Optional
+from datetime import datetime, timezone
 from enum import Enum
 from utils.logger import get_logger
 import asyncio
@@ -27,7 +27,7 @@ class CircuitState(Enum):
 class CircuitBreaker:
     """
     Circuit Breaker para proteger llamadas a APIs externas.
-    
+
     ESTRATEGIA:
     1. Contar fallos consecutivos
     2. Si se llega al threshold, pasar a OPEN
@@ -36,7 +36,7 @@ class CircuitBreaker:
     5. En HALF_OPEN, permitir un request de prueba
     6. Si funciona, volver a CLOSED
     """
-    
+
     def __init__(
         self,
         name: str,
@@ -46,7 +46,7 @@ class CircuitBreaker:
     ):
         """
         Inicializa el circuit breaker.
-        
+
         Args:
             name: Nombre del circuito (para logging)
             failure_threshold: Fallos consecutivos antes de abrir
@@ -57,23 +57,23 @@ class CircuitBreaker:
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
         self.expected_exception = expected_exception
-        
+
         self._failure_count = 0
         self._last_failure_time: Optional[datetime] = None
         self._state = CircuitState.CLOSED
-        
+
         logger.info(
             "circuit_breaker_initialized",
             name=name,
             failure_threshold=failure_threshold,
             recovery_timeout=recovery_timeout
         )
-    
+
     @property
     def state(self) -> CircuitState:
         """Retorna el estado actual del circuito."""
         return self._state
-    
+
     async def call(
         self,
         func: Callable[..., Any],
@@ -82,15 +82,15 @@ class CircuitBreaker:
     ) -> Any:
         """
         Ejecuta una función a través del circuit breaker.
-        
+
         Args:
             func: Función a ejecutar
             *args: Argumentos posicionales
             **kwargs: Argumentos nombrados
-        
+
         Returns:
             Resultado de la función
-        
+
         Raises:
             Exception: Si el circuito está OPEN
         """
@@ -112,25 +112,25 @@ class CircuitBreaker:
                     f"Circuit breaker '{self.name}' está OPEN. "
                     f"El servicio no está disponible."
                 )
-        
+
         try:
             # Ejecutar función
             result = await func(*args, **kwargs) if asyncio.iscoroutinefunction(func) else func(*args, **kwargs)
-            
+
             # Si funcionó, resetear el estado
             if self._state == CircuitState.HALF_OPEN:
                 self._reset()
                 logger.info("circuit_breaker_closed", name=self.name)
             elif self._state == CircuitState.CLOSED:
                 self._failure_count = 0
-            
+
             return result
-        
+
         except self.expected_exception as e:
             # Contar fallo
             self._failure_count += 1
-            self._last_failure_time = datetime.utcnow()
-            
+            self._last_failure_time = datetime.now(timezone.utc)
+
             logger.warning(
                 "circuit_breaker_failure",
                 name=self.name,
@@ -138,7 +138,7 @@ class CircuitBreaker:
                 threshold=self.failure_threshold,
                 error=str(e)
             )
-            
+
             # Si alcanzamos el threshold, abrir el circuito
             if self._failure_count >= self.failure_threshold:
                 self._state = CircuitState.OPEN
@@ -147,28 +147,28 @@ class CircuitBreaker:
                     name=self.name,
                     failure_count=self._failure_count
                 )
-            
+
             raise
-    
+
     def _should_attempt_reset(self) -> bool:
         """
         Verifica si es tiempo de intentar recuperación.
-        
+
         Returns:
             True si pasó el timeout desde el último fallo
         """
         if not self._last_failure_time:
             return False
-        
-        elapsed = datetime.utcnow() - self._last_failure_time
+
+        elapsed = datetime.now(timezone.utc) - self._last_failure_time
         return elapsed.total_seconds() >= self.recovery_timeout
-    
+
     def _reset(self) -> None:
         """Resetea el circuito a estado CLOSED."""
         self._state = CircuitState.CLOSED
         self._failure_count = 0
         self._last_failure_time = None
-    
+
     def get_status(self) -> dict:
         """Retorna el estado actual del circuito."""
         return {

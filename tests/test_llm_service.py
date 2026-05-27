@@ -19,7 +19,11 @@ class TestOpenAIProvider:
     @pytest.mark.asyncio
     async def test_qualify_lead_qualified(self):
         """Test de cualificación exitosa con OpenAI."""
-        settings = Settings()
+        settings = Settings(
+            telegram_bot_token="test", 
+            google_sheet_id="test",
+            openai_api_key="sk-mock-key"
+        )
         settings.llm_provider = "openai"
         
         llm_service = LLMService(settings)
@@ -45,7 +49,11 @@ class TestAnthropicProvider:
     @pytest.mark.asyncio
     async def test_qualify_lead_not_qualified(self):
         """Test de rechazo correcto con Anthropic."""
-        settings = Settings()
+        settings = Settings(
+            telegram_bot_token="test", 
+            google_sheet_id="test",
+            anthropic_api_key="sk-ant-mock-key"
+        )
         settings.llm_provider = "anthropic"
         
         llm_service = LLMService(settings)

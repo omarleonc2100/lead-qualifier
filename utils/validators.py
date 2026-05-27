@@ -3,7 +3,6 @@ Validadores reutilizables para inputs y seguridad.
 """
 
 import re
-from typing import List
 from config.constants import PROMPT_INJECTION_PATTERNS
 
 

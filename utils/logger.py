@@ -3,10 +3,14 @@ Configuración centralizada de logging.
 Usa structlog para logs estructurados y fáciles de parsear.
 """
 
+from __future__ import annotations
+
 import logging
 import structlog
-from typing import Optional
-from config.settings import Settings
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from config.settings import Settings
 
 
 def setup_logger(settings: Settings) -> None:

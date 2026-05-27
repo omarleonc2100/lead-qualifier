@@ -34,7 +34,7 @@ class TestLeadQualificationFlow:
     @pytest.mark.asyncio
     async def test_process_lead_valid_input(self):
         """Test de procesamiento de lead válido."""
-        settings = Settings()
+        settings = Settings(telegram_bot_token="test", google_sheet_id="test")
         
         # Mock de servicios
         llm_service = AsyncMock()
@@ -75,7 +75,7 @@ class TestLeadQualificationFlow:
     @pytest.mark.asyncio
     async def test_process_lead_invalid_input(self):
         """Test de rechazo de input inválido."""
-        settings = Settings()
+        settings = Settings(telegram_bot_token="test", google_sheet_id="test")
         
         # Mock de servicios
         llm_service = AsyncMock()

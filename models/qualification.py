@@ -3,9 +3,14 @@ Modelos para la respuesta de cualificación del LLM.
 Utiliza Pydantic para garantizar salidas estructuradas consistentes.
 """
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def _utcnow() -> datetime:
+    """Retorna la hora actual en UTC de forma compatible con Python 3.12+."""
+    return datetime.now(timezone.utc)
 
 
 class LeadQualification(BaseModel):
@@ -36,13 +41,17 @@ class LeadQualification(BaseModel):
             raise ValueError("La razón debe tener al menos 10 caracteres")
         return v
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "is_qualified": True,
-                "reason": "Empresa de consultoría con 20 empleados en Madrid, interesada en automatizar procesos. Cumple todos los criterios del ICP."
+                "reason": (
+                    "Empresa de consultoría con 20 empleados en Madrid, interesada en automatizar procesos. "
+                    "Cumple todos los criterios del ICP."
+                )
             }
         }
+    )
 
 
 class QualificationResult(BaseModel):
@@ -50,14 +59,10 @@ class QualificationResult(BaseModel):
     Resultado completo de cualificación incluye metadata y auditoría.
     """
 
-    lead_id: Optional[str] = Field(None, description="ID único del lead generado")
-    qualification: LeadQualification = Field(..., description="Resultado de cualificación")
-    metadata: Optional[dict] = Field(default_factory=dict, description="Metadata adicional")
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="Cuándo se creó")
-    model_used: str = Field(..., description="Modelo de LLM usado")
-
-    class Config:
-        json_schema_extra = {
+    # Suprimir el warning de Pydantic sobre el namespace protegido 'model_'
+    model_config = ConfigDict(
+        protected_namespaces=(),
+        json_schema_extra={
             "example": {
                 "lead_id": "lead_123456",
                 "qualification": {
@@ -68,3 +73,10 @@ class QualificationResult(BaseModel):
                 "model_used": "gpt-4o-mini"
             }
         }
+    )
+
+    lead_id: Optional[str] = Field(None, description="ID único del lead generado")
+    qualification: LeadQualification = Field(..., description="Resultado de cualificación")
+    metadata: Optional[dict] = Field(default_factory=dict, description="Metadata adicional")
+    created_at: datetime = Field(default_factory=_utcnow, description="Cuándo se creó")
+    model_used: str = Field(..., description="Modelo de LLM usado")

@@ -3,13 +3,32 @@ Modelos de datos para leads.
 Usa Pydantic para validación automática y serialización.
 """
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def _utcnow() -> datetime:
+    """Retorna la hora actual en UTC de forma compatible con Python 3.12+."""
+    return datetime.now(timezone.utc)
 
 
 class LeadInput(BaseModel):
     """Modelo que representa los datos brutos de un lead recibido."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "raw_text": (
+                    "Somos una empresa de consultoría en Madrid con 20 empleados. "
+                    "Buscamos automatizar nuestros procesos de ventas."
+                ),
+                "telegram_user_id": 123456789,
+                "telegram_username": "example_user",
+                "timestamp": "2024-03-20T15:30:00+00:00"
+            }
+        }
+    )
 
     raw_text: str = Field(
         ...,
@@ -19,7 +38,7 @@ class LeadInput(BaseModel):
     )
     telegram_user_id: int = Field(..., description="ID del usuario de Telegram")
     telegram_username: Optional[str] = Field(None, description="Username de Telegram")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Cuándo se recibió")
+    timestamp: datetime = Field(default_factory=_utcnow, description="Cuándo se recibió")
 
     @field_validator("raw_text")
     @classmethod
@@ -32,28 +51,12 @@ class LeadInput(BaseModel):
             raise ValueError("El texto del lead no puede estar vacío")
         return v
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "raw_text": "Somos una empresa de consultoría en Madrid con 20 empleados. Buscamos automatizar nuestros procesos de ventas.",
-                "telegram_user_id": 123456789,
-                "telegram_username": "example_user",
-                "timestamp": "2024-03-20T15:30:00"
-            }
-        }
-
 
 class LeadMetadata(BaseModel):
     """Metadata extraída del lead para auditoría y debugging."""
 
-    extracted_company_type: Optional[str] = Field(None, description="Tipo de empresa detectado")
-    extracted_employees: Optional[int] = Field(None, description="Número de empleados detectado")
-    extracted_region: Optional[str] = Field(None, description="Región detectada")
-    extracted_interests: list[str] = Field(default_factory=list, description="Intereses detectados")
-    processing_latency_ms: Optional[float] = Field(None, description="Latencia del procesamiento en ms")
-
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "extracted_company_type": "consulting",
                 "extracted_employees": 20,
@@ -62,3 +65,10 @@ class LeadMetadata(BaseModel):
                 "processing_latency_ms": 1234.5
             }
         }
+    )
+
+    extracted_company_type: Optional[str] = Field(None, description="Tipo de empresa detectado")
+    extracted_employees: Optional[int] = Field(None, description="Número de empleados detectado")
+    extracted_region: Optional[str] = Field(None, description="Región detectada")
+    extracted_interests: list[str] = Field(default_factory=list, description="Intereses detectados")
+    processing_latency_ms: Optional[float] = Field(None, description="Latencia del procesamiento en ms")

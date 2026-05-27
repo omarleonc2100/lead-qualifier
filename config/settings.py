@@ -3,8 +3,8 @@ Configuración centralizada usando Pydantic Settings.
 Lee variables de entorno de forma segura y con validación de tipos.
 """
 
-from pydantic_settings import BaseSettings
-from pydantic import Field, validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator
 from typing import Optional, List
 from pathlib import Path
 import logging
@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     Configuración centralizada de la aplicación.
     Hereda de BaseSettings para leer automáticamente desde variables de entorno.
     """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
     # ============ TELEGRAM ============
     telegram_bot_token: str = Field(..., description="Token del bot de Telegram")
@@ -93,12 +99,8 @@ class Settings(BaseSettings):
         description="Límite de requests por minuto por usuario"
     )
 
-    class Config:
-        """Configuración de Pydantic Settings."""
-        env_file = ".env"
-        case_sensitive = False
-
-    @validator("environment")
+    @field_validator("environment", mode="before")
+    @classmethod
     def validate_environment(cls, v: str) -> str:
         """Valida que el ambiente sea uno de los permitidos."""
         allowed_envs = ["development", "staging", "production"]
@@ -106,7 +108,8 @@ class Settings(BaseSettings):
             raise ValueError(f"Environment must be one of {allowed_envs}")
         return v.lower()
 
-    @validator("llm_provider")
+    @field_validator("llm_provider", mode="before")
+    @classmethod
     def validate_llm_provider(cls, v: str) -> str:
         """Valida que el proveedor de LLM sea válido."""
         allowed_providers = ["openai", "anthropic"]
@@ -114,7 +117,8 @@ class Settings(BaseSettings):
             raise ValueError(f"LLM provider must be one of {allowed_providers}")
         return v.lower()
 
-    @validator("log_level")
+    @field_validator("log_level", mode="before")
+    @classmethod
     def validate_log_level(cls, v: str) -> str:
         """Valida que el nivel de log sea válido."""
         allowed_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]

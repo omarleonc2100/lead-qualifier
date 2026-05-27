@@ -1,8 +1,6 @@
 """
 Servicio de procesamiento de leads.
-Orquesta el flujo completo: validación -> LLM -> Google Sheets -> Telegram.
-
-ACTUALIZADO PARA FASE 2: Ahora usa servicios reales.
+FASE 4: Integración completa con rate limiting y error handling.
 """
 
 from typing import Optional
@@ -10,6 +8,8 @@ from models.lead import LeadInput
 from models.qualification import QualificationResult
 from utils.logger import get_logger
 from utils.validators import sanitize_input, detect_prompt_injection, validate_text_length
+from utils.rate_limiter import RateLimiter
+from handlers.error_handler import ErrorHandler
 from config.settings import Settings
 from config.constants import TELEGRAM_RESPONSE_ERROR
 from datetime import datetime
@@ -21,14 +21,13 @@ logger = get_logger(__name__)
 class LeadProcessor:
     """
     Orquestador principal del procesamiento de leads.
-    Coordina LLM, Google Sheets y Telegram.
     
-    FLUJO:
-    1. Validar input (Pydantic + custom validators)
-    2. Detectar prompt injection
-    3. Llamar LLM para cualificar
-    4. Guardar en Google Sheets
-    5. Enviar respuesta a Telegram
+    FASE 4 FEATURES:
+    - Rate limiting por usuario
+    - Manejo robusto de errores con retry
+    - Logging completo de latencias
+    - Traducción de errores a mensajes amigables
+    - Procesamiento asincrónico optimizado
     """
     
     def __init__(
@@ -52,6 +51,12 @@ class LeadProcessor:
         self.sheets_service = sheets_service
         self.telegram_service = telegram_service
         
+        # Rate limiter
+        self.rate_limiter = RateLimiter(
+            per_user_limit=settings.rate_limit_per_minute,
+            global_limit=5  # 5 requests por segundo a APIs
+        )
+        
         logger.info("lead_processor_initialized")
     
     async def process_lead(
@@ -64,11 +69,13 @@ class LeadProcessor:
         Procesa un lead desde inicio a fin.
         
         PASOS:
-        1. Validar input
-        2. Verificar prompt injection
-        3. Procesar con LLM
-        4. Guardar en Google Sheets
-        5. Enviar respuesta a Telegram
+        1. Rate limiting
+        2. Validar input
+        3. Verificar prompt injection
+        4. Procesar con LLM
+        5. Guardar en Google Sheets
+        6. Enviar respuesta a Telegram
+        7. Log de latencia y éxito
         
         Args:
             raw_text: Texto libre del lead
@@ -89,14 +96,18 @@ class LeadProcessor:
                 text_length=len(raw_text)
             )
             
-            # ============ PASO 1: VALIDACIÓN DE INPUT ============
+            # ============ PASO 1: RATE LIMITING ============
+            logger.debug("lead_processor_checking_rate_limit", request_id=request_id)
+            await self.rate_limiter.wait_if_needed(telegram_user_id)
+            
+            # ============ PASO 2: VALIDACIÓN DE INPUT ============
             lead = self._validate_input(
                 raw_text=raw_text,
                 telegram_user_id=telegram_user_id,
                 telegram_username=telegram_username,
             )
             
-            # ============ PASO 2: VERIFICAR PROMPT INJECTION ============
+            # ============ PASO 3: VERIFICAR PROMPT INJECTION ============
             if self.settings.enable_prompt_injection_check:
                 if detect_prompt_injection(lead.raw_text):
                     logger.warning(
@@ -106,11 +117,11 @@ class LeadProcessor:
                     )
                     # En FASE 5 manejaremos esto más sofisticadamente
             
-            # ============ PASO 3: PROCESAR CON LLM ============
+            # ============ PASO 4: PROCESAR CON LLM ============
             logger.debug("lead_processor_calling_llm", request_id=request_id)
             result = await self.llm_service.qualify_lead(lead)
             
-            # ============ PASO 4: PERSISTIR EN GOOGLE SHEETS ============
+            # ============ PASO 5: PERSISTIR EN GOOGLE SHEETS ============
             decision_text = "CUALIFICADO" if result.qualification.is_qualified else "NO CUALIFICADO"
             
             logger.debug(
@@ -134,7 +145,7 @@ class LeadProcessor:
                 )
                 # Continuamos, no es crítico
             
-            # ============ PASO 5: ENVIAR RESPUESTA A TELEGRAM ============
+            # ============ PASO 6: ENVIAR RESPUESTA A TELEGRAM ============
             logger.debug(
                 "lead_processor_sending_telegram",
                 request_id=request_id,
@@ -146,7 +157,7 @@ class LeadProcessor:
                 qualification=result.qualification,
             )
             
-            # ============ LOG DE ÉXITO ============
+            # ============ PASO 7: LOG DE ÉXITO ============
             elapsed_ms = (time.time() - start_time) * 1000
             logger.info(
                 "lead_processor_success",
@@ -156,6 +167,14 @@ class LeadProcessor:
                 elapsed_ms=f"{elapsed_ms:.2f}",
                 sheets_saved=sheets_success
             )
+            
+            # Advertencia si la latencia es alta
+            if elapsed_ms > 5000:  # 5 segundos
+                logger.warning(
+                    "lead_processor_high_latency",
+                    request_id=request_id,
+                    elapsed_ms=f"{elapsed_ms:.2f}"
+                )
             
             return result
         
@@ -170,28 +189,25 @@ class LeadProcessor:
                 elapsed_ms=f"{elapsed_ms:.2f}"
             )
             
-            await self._send_telegram_error(
-                telegram_user_id,
-                "El formato de tu mensaje no es válido. Intenta describir tu empresa con más detalle."
-            )
+            user_message = ErrorHandler.get_user_message(e)
+            await self._send_telegram_error(telegram_user_id, user_message)
             return None
         
         except Exception as e:
             # Errores inesperados (LLM, Sheets, etc)
             elapsed_ms = (time.time() - start_time) * 1000
+            error_details = ErrorHandler.get_error_details(e)
+            
             logger.error(
                 "lead_processor_failed",
                 request_id=request_id,
                 telegram_user_id=telegram_user_id,
-                error=str(e),
-                error_type=type(e).__name__,
-                elapsed_ms=f"{elapsed_ms:.2f}"
+                elapsed_ms=f"{elapsed_ms:.2f}",
+                **error_details
             )
             
-            await self._send_telegram_error(
-                telegram_user_id,
-                "Ocurrió un error procesando tu solicitud. Por favor, intenta de nuevo en unos momentos."
-            )
+            user_message = ErrorHandler.get_user_message(e)
+            await self._send_telegram_error(telegram_user_id, user_message)
             return None
     
     def _validate_input(
@@ -206,7 +222,7 @@ class LeadProcessor:
         VALIDACIONES:
         1. Longitud mínima/máxima
         2. No vacío después de sanitizar
-        3. Creación de modelo Pydantic (valida automáticamente tipos y constraints)
+        3. Creación de modelo Pydantic
         
         Args:
             raw_text: Texto a validar
@@ -229,7 +245,7 @@ class LeadProcessor:
             # Sanitizar
             sanitized_text = sanitize_input(raw_text)
             
-            # Crear modelo Pydantic (valida automáticamente tipos y constraints)
+            # Crear modelo Pydantic
             lead = LeadInput(
                 raw_text=sanitized_text,
                 telegram_user_id=telegram_user_id,
@@ -307,16 +323,12 @@ class LeadProcessor:
         
         Args:
             telegram_user_id: ID del chat
-            error_message: Mensaje de error
+            error_message: Mensaje de error (ya amigable para usuario)
         """
         try:
-            message = TELEGRAM_RESPONSE_ERROR.format(
-                error_message=error_message[:100]
-            )
-            
             await self.telegram_service.send_message(
                 chat_id=telegram_user_id,
-                message=message,
+                message=error_message,
                 parse_mode="Markdown"
             )
         

@@ -1,6 +1,6 @@
 """
 Punto de entrada principal de la aplicación.
-FASE 3: Agregamos test de conexión con LLM antes de iniciar.
+FASE 4: Health checks y monitoreo de estado.
 """
 
 import asyncio
@@ -20,6 +20,29 @@ from handlers.telegram_handlers import TelegramHandlers
 logger = get_logger(__name__)
 
 
+class ApplicationHealth:
+    """Monitor de salud de la aplicación."""
+    
+    def __init__(self):
+        self.telegram_ok = False
+        self.llm_ok = False
+        self.sheets_ok = False
+        self.start_time = None
+    
+    def is_healthy(self) -> bool:
+        """Retorna True si todos los servicios están listos."""
+        return self.telegram_ok and self.llm_ok and self.sheets_ok
+    
+    def get_status(self) -> str:
+        """Retorna estado actual en formato legible."""
+        status = (
+            f"Telegram: {'✅' if self.telegram_ok else '❌'} | "
+            f"LLM: {'✅' if self.llm_ok else '❌'} | "
+            f"Sheets: {'✅' if self.sheets_ok else '❌'}"
+        )
+        return status
+
+
 class Application:
     """
     Clase principal que orquesta la aplicación.
@@ -34,6 +57,7 @@ class Application:
         """
         self.settings = settings
         self.services_initialized = False
+        self.health = ApplicationHealth()
         
         # Servicios
         self.sheets_service: Optional[GoogleSheetsService] = None
@@ -48,6 +72,7 @@ class Application:
         """
         try:
             logger.info("application_setup_start")
+            self.health.start_time = __import__('time').time()
             
             # ============ GOOGLE SHEETS ============
             logger.info("initializing_sheets_service")
@@ -65,11 +90,13 @@ class Application:
                 )
             
             logger.info("sheets_service_ready")
+            self.health.sheets_ok = True
             
             # ============ TELEGRAM ============
             logger.info("initializing_telegram_service")
             self.telegram_service = TelegramService(self.settings)
             logger.info("telegram_service_ready")
+            self.health.telegram_ok = True
             
             # ============ LLM ============
             logger.info("initializing_llm_service")
@@ -92,6 +119,7 @@ class Application:
                 )
             
             logger.info("llm_service_ready")
+            self.health.llm_ok = True
             
             # ============ LEAD PROCESSOR ============
             logger.info("initializing_lead_processor")
@@ -135,22 +163,19 @@ class Application:
         if not self.services_initialized:
             await self.setup()
         
+        if not self.health.is_healthy():
+            raise RuntimeError("No todos los servicios están listos")
+        
         try:
             logger.info(
                 "application_run_start",
                 environment=self.settings.environment,
                 llm_provider=self.settings.llm_provider,
-                llm_model=self.llm_service.get_provider_name()
+                llm_model=self.llm_service._get_model_name() if self.llm_service else "unknown"
             )
             
-            print("\n" + "=" * 60)
-            print("✅ Bot de Orbyn iniciado correctamente")
-            print("=" * 60)
-            print(f"📍 Proveedor LLM: {self.settings.llm_provider.upper()}")
-            print(f"🤖 Modelo: {self.llm_service._get_model_name()}")
-            print(f"📊 Google Sheet: {self.settings.google_sheet_id}")
-            print("=" * 60)
-            print("\n⏳ Esperando mensajes en Telegram...\n")
+            # Mostrar información de startup
+            self._print_startup_banner()
             
             # Iniciar Telegram polling
             await self.telegram_service.start_polling()
@@ -163,6 +188,25 @@ class Application:
         finally:
             await self.shutdown()
     
+    def _print_startup_banner(self) -> None:
+        """Imprime un banner de inicio legible."""
+        print("\n" + "=" * 70)
+        print("🚀 ORBYN LEAD QUALIFIER - INICIADO CORRECTAMENTE".center(70))
+        print("=" * 70)
+        print()
+        print(f"  📍 Proveedor LLM:        {self.settings.llm_provider.upper()}")
+        print(f"  🤖 Modelo:               {self.llm_service._get_model_name() if self.llm_service else 'unknown'}")
+        print(f"  📊 Google Sheet:         {self.settings.google_sheet_id[:20]}...")
+        print(f"  ⚙️  Ambiente:            {self.settings.environment.upper()}")
+        print(f"  🔄 Rate Limit:           {self.settings.rate_limit_per_minute}/min por usuario")
+        print(f"  📋 Prompt Injection:     {'✅ Habilitado' if self.settings.enable_prompt_injection_check else '❌ Deshabilitado'}")
+        print()
+        print("=" * 70)
+        print("  ✨ Esperando mensajes en Telegram...".ljust(70))
+        print("  💡 Escribe /help para ver los comandos disponibles".ljust(70))
+        print("=" * 70)
+        print()
+    
     async def shutdown(self) -> None:
         """
         Detiene la aplicación gracefully.
@@ -174,6 +218,8 @@ class Application:
                 await self.telegram_service.stop()
             
             logger.info("application_shutdown_complete")
+            print("\n✅ Bot detenido correctamente\n")
+        
         except Exception as e:
             logger.error("application_shutdown_error", error=str(e))
 
@@ -201,7 +247,7 @@ async def main():
         "application_startup",
         environment=settings.environment,
         llm_provider=settings.llm_provider,
-        version="3.0.0"
+        version="4.0.0"
     )
     
     # Crear aplicación
@@ -227,7 +273,6 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n✋ Bot detenido por el usuario")
+        pass
     except Exception as e:
-        print(f"\n❌ Error fatal: {e}")
         exit(1)

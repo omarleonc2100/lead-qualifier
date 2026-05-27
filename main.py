@@ -1,14 +1,13 @@
 """
 Punto de entrada principal de la aplicación.
-Inicializa todos los servicios e inicia el bot.
-
-FASE 2: Inicializa Google Sheets y Telegram.
+FASE 3: Agregamos test de conexión con LLM antes de iniciar.
 """
 
 import asyncio
 import logging
 import signal
 from pathlib import Path
+from typing import Optional
 
 from config.settings import Settings
 from utils.logger import setup_logger, get_logger
@@ -36,12 +35,12 @@ class Application:
         self.settings = settings
         self.services_initialized = False
         
-        # Servicios (se inicializan en setup)
-        self.sheets_service: GoogleSheetsService = None
-        self.telegram_service: TelegramService = None
-        self.llm_service: LLMService = None
-        self.lead_processor: LeadProcessor = None
-        self.handlers: TelegramHandlers = None
+        # Servicios
+        self.sheets_service: Optional[GoogleSheetsService] = None
+        self.telegram_service: Optional[TelegramService] = None
+        self.llm_service: Optional[LLMService] = None
+        self.lead_processor: Optional[LeadProcessor] = None
+        self.handlers: Optional[TelegramHandlers] = None
     
     async def setup(self) -> None:
         """
@@ -58,9 +57,11 @@ class Application:
             creds_path = Path(self.settings.google_sheets_credentials_path)
             if not creds_path.exists():
                 raise FileNotFoundError(
-                    f"Credenciales de Google no encontradas en {creds_path}\n"
-                    f"Por favor, descarga tu archivo de service account desde Google Cloud Console "
-                    f"y guárdalo en {creds_path}"
+                    f"❌ Credenciales de Google no encontradas en {creds_path}\n"
+                    f"   Pasos para configurar:\n"
+                    f"   1. Descarga json de service account desde Google Cloud Console\n"
+                    f"   2. Guárdalo en: {creds_path}\n"
+                    f"   3. Comparte tu Google Sheet con el email del service account"
                 )
             
             logger.info("sheets_service_ready")
@@ -73,6 +74,23 @@ class Application:
             # ============ LLM ============
             logger.info("initializing_llm_service")
             self.llm_service = LLMService(self.settings)
+            
+            # TEST: Verificar conexión con LLM
+            logger.info(
+                "testing_llm_connection",
+                provider=self.llm_service.get_provider_name()
+            )
+            llm_connected = await self.llm_service.test_connection()
+            
+            if not llm_connected:
+                raise RuntimeError(
+                    f"❌ No se pudo conectar con {self.settings.llm_provider}\n"
+                    f"   Verifica:\n"
+                    f"   - Clave API correcta en .env\n"
+                    f"   - Acceso a internet disponible\n"
+                    f"   - Cuota de API disponible"
+                )
+            
             logger.info("llm_service_ready")
             
             # ============ LEAD PROCESSOR ============
@@ -98,6 +116,14 @@ class Application:
             self.services_initialized = True
             logger.info("application_setup_complete")
         
+        except FileNotFoundError as e:
+            logger.error("application_setup_file_not_found", error=str(e))
+            print(f"\n{e}")
+            raise
+        except RuntimeError as e:
+            logger.error("application_setup_runtime_error", error=str(e))
+            print(f"\n{e}")
+            raise
         except Exception as e:
             logger.error("application_setup_failed", error=str(e))
             raise
@@ -113,8 +139,18 @@ class Application:
             logger.info(
                 "application_run_start",
                 environment=self.settings.environment,
-                llm_provider=self.settings.llm_provider
+                llm_provider=self.settings.llm_provider,
+                llm_model=self.llm_service.get_provider_name()
             )
+            
+            print("\n" + "=" * 60)
+            print("✅ Bot de Orbyn iniciado correctamente")
+            print("=" * 60)
+            print(f"📍 Proveedor LLM: {self.settings.llm_provider.upper()}")
+            print(f"🤖 Modelo: {self.llm_service._get_model_name()}")
+            print(f"📊 Google Sheet: {self.settings.google_sheet_id}")
+            print("=" * 60)
+            print("\n⏳ Esperando mensajes en Telegram...\n")
             
             # Iniciar Telegram polling
             await self.telegram_service.start_polling()
@@ -150,8 +186,12 @@ async def main():
     try:
         settings = Settings()
     except Exception as e:
-        print(f"❌ Error cargando configuración: {e}")
-        print(f"Por favor, verifica que el archivo .env existe y tiene todas las variables requeridas.")
+        print(f"\n❌ Error cargando configuración: {e}")
+        print(f"\n   Por favor, verifica que el archivo .env existe y tiene todas las variables requeridas:")
+        print(f"   - TELEGRAM_BOT_TOKEN")
+        print(f"   - OPENAI_API_KEY (o ANTHROPIC_API_KEY)")
+        print(f"   - GOOGLE_SHEET_ID")
+        print(f"   - GOOGLE_SHEETS_CREDENTIALS_PATH")
         raise
     
     # Configurar logging
@@ -161,7 +201,7 @@ async def main():
         "application_startup",
         environment=settings.environment,
         llm_provider=settings.llm_provider,
-        version="1.0.0"
+        version="3.0.0"
     )
     
     # Crear aplicación
@@ -189,5 +229,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n✋ Bot detenido por el usuario")
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"\n❌ Error fatal: {e}")
         exit(1)
